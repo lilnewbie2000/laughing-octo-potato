@@ -22,8 +22,11 @@ jobs:
         shell: bash
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --version
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          find "$ANDROID_HOME" -maxdepth 3 -name sdkmanager -type f || true
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --version
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug APK
         working-directory: KipAutomate
         run: gradle --no-daemon --stacktrace :app:assembleDebug
