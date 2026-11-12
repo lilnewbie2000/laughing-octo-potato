@@ -379,30 +379,40 @@ final class SocialFilter {
     }
 
     // Require visible Series product UI, not a generic caption mentioning a series.
+    // Distinguish TikTok's own paid Series cards from creators merely
+    // writing "episode" or "series" in a normal video's caption.
     private static boolean isSeries(List<Item> a,Point s) {
-        boolean namedBadge=false, paidOffer=false, episodeOffer=false;
+        boolean productId=false,paidCta=false,seriesBadge=false,episodeCta=false;
         for(Item i:a) {
-            if(!visible(i,s)) continue;
-            String t=i.text.trim();
+            if(!visible(i,s))continue;
+            String t=i.text.trim(),id=i.id;
             float y=(float)i.rect.centerY()/s.y;
+            boolean inVideo=y>.12f && y<.93f;
             boolean compact=shortLabel(i,s);
-            if(y>.13f && y<.92f &&
-                    (i.id.contains("series_badge") || i.id.contains("series_link") ||
-                     i.id.contains("paid_series") || i.id.contains("series_purchase"))) namedBadge=true;
-            if(y>.16f && y<.91f && compact &&
-                    (t.equals("series") || t.equals("сериалы") || t.equals("сериал") ||
-                     t.startsWith("series ·") || t.startsWith("series -") ||
-                     t.startsWith("series:") || t.startsWith("tiktok series") ||
-                     t.startsWith("paid series") || t.startsWith("платный сериал"))) namedBadge=true;
-            if(t.contains("purchase series") || t.contains("unlock series") ||
-               t.contains("buy series") || t.contains("buy episodes") ||
-               t.contains("watch full series") || t.contains("купить серию") ||
-               t.contains("покупка сериала") || t.contains("платный сериал"))paidOffer=true;
-            if(t.contains("unlock all episodes") || t.contains("watch all episodes") ||
-               t.contains("unlock episodes") || t.contains("full series") ||
-               t.contains("все эпизоды") || t.contains("открыть серии"))episodeOffer=true;
+            if(inVideo&&(id.contains("series_badge")||id.contains("series_link")||
+                    id.contains("paid_series")||id.contains("series_purchase")||
+                    id.contains("series_entrance")||id.contains("series_card")||
+                    id.contains("series_anchor")||id.contains("episode_paywall")))productId=true;
+            if(inVideo && compact && i.clickable && (
+                    t.equals("series")||t.equals("paid series")||t.equals("сериалы")||
+                    t.startsWith("view series")||t.startsWith("watch series")||
+                    t.startsWith("explore series")||t.startsWith("unlock series")||
+                    t.startsWith("смотреть сериал")||t.startsWith("открыть сериал")))seriesBadge=true;
+            if(inVideo && compact && (
+                    t.contains("purchase series")||t.contains("buy series")||
+                    t.contains("unlock full series")||t.contains("unlock this series")||
+                    t.contains("watch full series")||t.contains("buy episodes")||
+                    t.contains("unlock all episodes")||t.contains("unlock episodes")||
+                    t.contains("купить серию")||t.contains("платный сериал")||
+                    t.contains("покупка сериала")||t.contains("разблокировать сериал")))paidCta=true;
+            if(inVideo && compact && (
+                    t.startsWith("view all episodes")||t.startsWith("watch all episodes")||
+                    t.startsWith("see all episodes")||t.startsWith("unlock next episode")||
+                    t.startsWith("buy episode")||t.startsWith("unlock episode")||
+                    t.startsWith("просмотреть все серии")))episodeCta=true;
         }
-        return paidOffer || namedBadge || (namedBadge && episodeOffer);
+        // Skip with confirmed product elements, never on generic titles/captions.
+        return paidCta || productId || (seriesBadge && episodeCta);
     }
     private static boolean hasSeriesLink(List<Item> a,Point s) {
         for(Item i:a)if(visible(i,s)&&shortLabel(i,s)&&
@@ -428,6 +438,11 @@ final class SocialFilter {
                     i.text.contains("buy episodes")||i.text.contains("купить серию")||
                     i.text.contains("unlock all episodes")||i.text.contains("watch all episodes"))marker="SERIES_CUE";
             else if(i.text.startsWith("series ·")||i.text.startsWith("series -")||i.text.startsWith("paid series"))marker="SERIES_BADGE";
+            else if(i.id.contains("episode") || i.id.contains("series") ||
+                    i.text.startsWith("view series") || i.text.startsWith("watch series") ||
+                    i.text.startsWith("view all episodes") || i.text.startsWith("watch all episodes") ||
+                    i.text.startsWith("unlock episode") || i.text.startsWith("unlock next episode"))
+                    marker="SERIES_HINT";
             else if(i.id.contains("clips_viewer")||i.id.contains("reels_viewer")||
                     i.id.contains("clips_ufi")||i.id.contains("reels_ufi"))marker="REELS_ID";
             else if(exact(i,"live","series","reels","sponsored","реклама","прямой эфир"))marker="LABEL";
