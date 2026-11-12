@@ -310,56 +310,65 @@ final class SocialFilter {
         }
         return false;
     }
+    // TikTok For You LIVE preview cards: pink "LIVE now" at bottom-left
+    // and/or "Tap to watch LIVE" in the lower center. The top-left LIVE
+    // navigation tab is excluded because it appears on ordinary videos too.
     private static boolean isLive(List<Item> a,Point s) {
-        boolean badge=false, associatedUI=false;
+        boolean previewBadge=false, previewCta=false, streamBadge=false, streamControls=false;
         for(Item i:a) {
-            if(!visible(i,s))continue;
-            String t=i.text;
-            boolean strongId=i.id.contains("live_badge")||i.id.contains("live_room")||i.id.contains("live_viewer");
-            if(strongId && i.rect.centerY()<s.y*.82f)badge=true;
-            // The top navigation LIVE tab is not a live broadcast.
-            boolean videoBadge=shortLabel(i,s) && i.rect.centerY()>s.y*.16f &&
-                i.rect.centerY()<s.y*.86f && i.rect.width()<s.x*.30f &&
-                (exact(i,"live","прямой эфир","эфир","livestream","live now") ||
-                 t.startsWith("live now ") || t.startsWith("прямой эфир "));
-            if(videoBadge)badge=true;
-            if(videoBadge && (i.clickable || strongId || i.id.contains("live")))associatedUI=true;
-            if(t.contains("watch live")||t.contains("join live")||t.contains("смотреть эфир")||
-               t.contains("присоединиться к эфиру")||t.contains("live viewers")||
-               t.contains("viewers watching")||t.contains("send gift")||
-               t.contains("отправить подарок")||i.id.contains("live_gift")||
-               i.id.contains("live_viewer"))associatedUI=true;
+            if(!visible(i,s)) continue;
+            String t=i.text.trim();
+            float x=(float)i.rect.centerX()/s.x;
+            float y=(float)i.rect.centerY()/s.y;
+            boolean compact=i.rect.width()<s.x*.72f && i.rect.height()<s.y*.16f && t.length()<150;
+            if(compact && x<.65f && y>.58f && y<.94f &&
+                 (t.equals("live now") || t.startsWith("live now ") || t.startsWith("live now:") ||
+                  t.contains(" live now") || t.startsWith("сейчас в эфире") ||
+                  t.startsWith("прямой эфир сейчас"))) previewBadge=true;
+            // The CTA can occupy most of the screen width; shortLabel() was too narrow.
+            if(compact && y>.43f && y<.91f &&
+                 (t.contains("tap to watch live") || t.contains("tap to view live") ||
+                  t.contains("tap to join live") || t.contains("tap to watch livestream") ||
+                  t.contains("нажмите, чтобы смотреть эфир") ||
+                  t.contains("нажмите, чтобы посмотреть прямой эфир") ||
+                  (y>.55f && (t.startsWith("watch live")||t.startsWith("join live"))))) previewCta=true;
+            if(y>.16f && y<.86f && (
+                    i.id.contains("live_preview") || i.id.contains("live_room") ||
+                    i.id.contains("feed_live") || i.id.contains("live_badge"))) streamBadge=true;
+            if(y>.16f && y<.88f && compact && x<.65f &&
+                    (t.equals("live") || t.equals("прямой эфир"))) streamBadge=true;
+            if(y>.14f && (t.contains("send gift") || t.contains("watch live") ||
+                   t.contains("join live") || t.contains("отправить подарок") ||
+                   i.id.contains("live_gift") || i.id.contains("live_viewer"))) streamControls=true;
         }
-        // A clear "watch live" CTA is itself unambiguous, but an isolated LIVE tab is not.
-        return (badge&&associatedUI)||hasLiveCta(a,s);
+        return previewBadge || previewCta || (streamBadge && streamControls);
     }
-    private static boolean hasLiveCta(List<Item>a,Point s) {
-        for(Item i:a) if(visible(i,s)&&shortLabel(i,s)&&
-            (i.text.startsWith("watch live")||i.text.startsWith("join live")||
-             i.text.startsWith("смотреть эфир")||i.text.startsWith("присоединиться к эфиру")))return true;
-        return false;
-    }
+
+    // Require visible Series product UI, not a generic caption mentioning a series.
     private static boolean isSeries(List<Item> a,Point s) {
-        boolean badge=false,payment=false;
+        boolean namedBadge=false, paidOffer=false, episodeOffer=false;
         for(Item i:a) {
-            if(!visible(i,s))continue;
-            String t=i.text;
-            if(i.id.contains("series_badge")||i.id.contains("series_link")||
-               i.id.contains("paid_series"))badge=true;
-            if(t.contains("purchase series")||t.contains("buy series")||t.contains("unlock series")||
-               t.contains("watch full series")||t.contains("buy episodes")||
-               t.contains("купить серию")||t.contains("открыть серии")||
-               t.contains("платный сериал")||t.contains("покупка сериала")||
-               i.id.contains("series_purchase"))payment=true;
+            if(!visible(i,s)) continue;
+            String t=i.text.trim();
+            float y=(float)i.rect.centerY()/s.y;
+            boolean compact=shortLabel(i,s);
+            if(y>.13f && y<.92f &&
+                    (i.id.contains("series_badge") || i.id.contains("series_link") ||
+                     i.id.contains("paid_series") || i.id.contains("series_purchase"))) namedBadge=true;
+            if(y>.16f && y<.91f && compact &&
+                    (t.equals("series") || t.equals("сериалы") || t.equals("сериал") ||
+                     t.startsWith("series ·") || t.startsWith("series -") ||
+                     t.startsWith("series:") || t.startsWith("tiktok series") ||
+                     t.startsWith("paid series") || t.startsWith("платный сериал"))) namedBadge=true;
+            if(t.contains("purchase series") || t.contains("unlock series") ||
+               t.contains("buy series") || t.contains("buy episodes") ||
+               t.contains("watch full series") || t.contains("купить серию") ||
+               t.contains("покупка сериала") || t.contains("платный сериал"))paidOffer=true;
+            if(t.contains("unlock all episodes") || t.contains("watch all episodes") ||
+               t.contains("unlock episodes") || t.contains("full series") ||
+               t.contains("все эпизоды") || t.contains("открыть серии"))episodeOffer=true;
         }
-        // Some paid Series videos have a badge but no purchase button yet.
-        if(payment || badge)return true;
-        for(Item i:a)if(visible(i,s)&&shortLabel(i,s)&&
-                i.rect.centerY()>s.y*.17f && i.rect.centerY()<s.y*.86f &&
-                i.rect.width()<s.x*.35f &&
-                (exact(i,"series","сериалы","сериал","paid series") ||
-                 (i.id.contains("series") && i.clickable)))return true;
-        return false;
+        return paidOffer || namedBadge || (namedBadge && episodeOffer);
     }
     private static boolean hasSeriesLink(List<Item> a,Point s) {
         for(Item i:a)if(visible(i,s)&&shortLabel(i,s)&&
@@ -372,12 +381,18 @@ final class SocialFilter {
         for(Item i:a) {
             if(!visible(i,s))continue;
             String marker="";
-            if(adWords(i.text))marker="AD_LABEL";
+            if(i.text.contains("tap to watch live") || i.text.contains("tap to join live") ||
+               i.text.contains("tap to view live"))marker="LIVE_PREVIEW_CTA";
+            else if(i.text.contains("live now") && i.rect.centerY()>s.y*.48f)marker="LIVE_NOW";
+            else if(adWords(i.text))marker="AD_LABEL";
             else if(i.id.endsWith(":id/iar"))marker="TT_AD_ID";
             else if(i.id.contains("live_badge")||i.id.contains("live_room")||i.id.contains("live_viewer"))marker="LIVE_ID";
             else if(i.id.contains("series_badge")||i.id.contains("series_link")||i.id.contains("paid_series")||i.id.contains("series_purchase"))marker="SERIES_ID";
             else if(i.text.contains("watch live")||i.text.contains("join live")||i.text.contains("send gift")||i.text.contains("смотреть эфир")||i.text.contains("прямой эфир"))marker="LIVE_CUE";
-            else if(i.text.contains("purchase series")||i.text.contains("unlock series")||i.text.contains("watch full series")||i.text.contains("buy episodes")||i.text.contains("купить серию"))marker="SERIES_CUE";
+            else if(i.text.contains("purchase series")||i.text.contains("unlock series")||i.text.contains("watch full series")||
+                    i.text.contains("buy episodes")||i.text.contains("купить серию")||
+                    i.text.contains("unlock all episodes")||i.text.contains("watch all episodes"))marker="SERIES_CUE";
+            else if(i.text.startsWith("series ·")||i.text.startsWith("series -")||i.text.startsWith("paid series"))marker="SERIES_BADGE";
             else if(i.id.contains("clips_viewer")||i.id.contains("reels_viewer")||
                     i.id.contains("clips_ufi")||i.id.contains("reels_ufi"))marker="REELS_ID";
             else if(exact(i,"live","series","reels","sponsored","реклама","прямой эфир"))marker="LABEL";
