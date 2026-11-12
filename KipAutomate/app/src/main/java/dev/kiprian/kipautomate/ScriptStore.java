@@ -14,12 +14,12 @@ public final class ScriptStore {
     public static String template() {
         return "[\n" +
                 "  {\n" +
-                "    \"name\": \"Samsung запись — тест 333\",\n" +
+                "    \"name\": \"Samsung запись — все номера\",\n" +
                 "    \"enabled\": false,\n" +
                 "    \"trigger\": {\"type\": \"call_active\"},\n" +
                 "    \"conditions\": {\"package\": \"com.samsung.android.incallui\", \"unlocked\": true},\n" +
                 "    \"actions\": [\n" +
-                "      {\"type\": \"wait_text\", \"text\": \"333\", \"timeoutMs\": 12000},\n" +
+
                 "      {\"type\": \"tap\", \"x\": 1112, \"y\": 2265},\n" +
                 "      {\"type\": \"wait\", \"ms\": 700},\n" +
                 "      {\"type\": \"tap\", \"x\": 500, \"y\": 1520},\n" +
@@ -35,6 +35,46 @@ public final class ScriptStore {
                 "    ]\n" +
                 "  }\n" +
                 "]";
+    }
+
+    /**
+     * One-time migration of the exact built-in Samsung 333 test.
+     * Existing independent scripts and custom call workflows remain unchanged.
+     * It keeps the enabled state and all actual More/Record actions.
+     */
+    public static boolean migrateSamsungAllCalls(Context context) {
+        try {
+            JSONArray scripts=new JSONArray(read(context));
+            boolean changed=false;
+            for(int i=0;i<scripts.length();i++) {
+                JSONObject sc=scripts.optJSONObject(i);
+                if(sc==null)continue;
+                JSONObject trigger=sc.optJSONObject("trigger");
+                JSONArray actions=sc.optJSONArray("actions");
+                if(trigger==null||actions==null||actions.length()<4 ||
+                   !"call_active".equals(trigger.optString("type")) ||
+                   !sc.optString("name").toLowerCase(java.util.Locale.ROOT).contains("samsung"))continue;
+                JSONObject a0=actions.optJSONObject(0);
+                JSONObject a1=actions.optJSONObject(1);
+                JSONObject a3=actions.optJSONObject(3);
+                if(a0!=null && a1!=null && a3!=null &&
+                   "wait_text".equals(a0.optString("type")) && "333".equals(a0.optString("text")) &&
+                   "tap".equals(a1.optString("type")) && a1.optInt("x",-1)==1112 && a1.optInt("y",-1)==2265 &&
+                   "tap".equals(a3.optString("type")) && a3.optInt("x",-1)==500 && a3.optInt("y",-1)==1520) {
+                    actions.remove(0);
+                    sc.put("name","Samsung запись — все номера");
+                    changed=true;
+                }
+            }
+            if(changed) {
+                write(context,scripts.toString(2));
+                LogBook.write(context,"PHONE AUTO-MIGRATION: убрана проверка 333, запись для всех номеров");
+            }
+            return changed;
+        } catch(Exception e) {
+            LogBook.write(context,"PHONE AUTO-MIGRATION ERROR: "+e.getMessage());
+            return false;
+        }
     }
 
     public static JSONArray socialTemplates() throws JSONException {
