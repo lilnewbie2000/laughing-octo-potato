@@ -162,9 +162,13 @@ final class SocialFilter {
                             lastTikTokCommentBounds.set(button.rect);
                             lastTikTokCommentAt=now;
                             showBlocker(button.rect,pkg);
-                        } else if(blocker!=null) {
-                            // Keep the shield on the last known button position.
-                        }
+                        } else if(blocker==null && isTikTokForYouFeed(items,size)) {
+                            Rect predicted=lastTikTokCommentBounds.isEmpty() ?
+                                new Rect((int)(size.x*.80f),(int)(size.y*.592f),
+                                         size.x,(int)(size.y*.664f))
+                                : new Rect(lastTikTokCommentBounds);
+                            showBlocker(predicted,pkg);
+                        } // Else keep the existing shield at its last stable position.
                     } else showBlocker(button.rect,pkg);
                 } else if(TT.equals(pkg) && isTikTokForYouFeed(items,size)) {
                     // During video transitions the accessibility comment node
@@ -395,7 +399,9 @@ final class SocialFilter {
                    (corroborated && compactDisclosure))return true;
                 continue;
             }
-            if(explicitSponsoredText(label) &&
+            // Some TikTok ad disclosures are combined with extra label text,
+            // so they appear wider than a simple "Ad" pill.
+            if((explicitSponsoredText(label) || adWords(label)) &&
                (strongAdResourceId(i.id) || corroborated ||
                 (lowerDisclosure && !i.clickable)))return true;
         }
