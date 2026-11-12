@@ -43,6 +43,7 @@ public class AutomationService extends AccessibilityService {
     @Override public void onServiceConnected() {
         super.onServiceConnected();
         current = this;
+        ScriptStore.migrateSamsungAllCalls(this);
         socialFilter = new SocialFilter(this, handler);
         LogBook.write(this, "SERVICE START — служба Accessibility подключена");
         phoneReceiver = new BroadcastReceiver() {
@@ -272,7 +273,7 @@ public class AutomationService extends AccessibilityService {
 
     private boolean isSamsungMoreStep(ScriptRun run,int stepNo,JSONObject action) {
         return "call_active".equals(run.trigger)&&run.name.toLowerCase(Locale.ROOT).contains("samsung")&&
-            stepNo==2&&action.optInt("x",-1)==1112&&action.optInt("y",-1)==2265;
+            action.optInt("x",-1)==1112&&action.optInt("y",-1)==2265;
     }
     private boolean samsungMoreLabel(String text) {
         if(text==null) return false;
@@ -317,7 +318,7 @@ public class AutomationService extends AccessibilityService {
 
     private boolean isSamsungRecordStep(ScriptRun run,int stepNo,JSONObject action) {
         return "call_active".equals(run.trigger)&&run.name.toLowerCase(Locale.ROOT).contains("samsung")&&
-            stepNo==4&&action.optInt("x",-1)==500&&action.optInt("y",-1)==1520;
+            action.optInt("x",-1)==500&&action.optInt("y",-1)==1520;
     }
 
     private boolean samsungStartLabel(String text) {
@@ -439,7 +440,7 @@ public class AutomationService extends AccessibilityService {
                     handled[0] = true;
                     LogBook.write(AutomationService.this, "STEP " + stepNo + " tap COMPLETED x=" + x + " y=" + y);
                     if("call_active".equals(run.trigger) &&
-                       run.name.toLowerCase(Locale.ROOT).contains("samsung")&&stepNo==4)
+                       run.name.toLowerCase(Locale.ROOT).contains("samsung")&&x==500&&y==1520)
                         handler.postDelayed(AutomationService.this::checkSamsungRecording,3800);
                     step(run);
                 }
