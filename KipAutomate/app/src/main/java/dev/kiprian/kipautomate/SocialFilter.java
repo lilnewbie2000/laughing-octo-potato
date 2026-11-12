@@ -39,6 +39,7 @@ final class SocialFilter {
     private String blockerPackage="";
     private long lastTikTokCommentAt=0;
     private long lastTick=0, lastSwipe=0, lastBack=0, lastReelSeen=0, lastDiagnostic=0;
+    private long lastValidSocialRoot=0;
     private String lastCandidate="", lastDecision="";
     private long candidateSince=0, lastDecisionTime=0;
     private int blockedTaps=0;
@@ -121,7 +122,12 @@ final class SocialFilter {
         if(now-lastTick<100) return;
         lastTick=now;
         AccessibilityNodeInfo root=service.getRootInActiveWindow();
-        if(root==null || root.getPackageName()==null) {hideBlocker();return;}
+        if(root==null || root.getPackageName()==null) {
+            // An accessibility tree can briefly disappear during a new video.
+            // Do not expose the comment button for that fraction of a second.
+            if(!TT.equals(activePackage) || now-lastValidSocialRoot>900)hideBlocker();
+            return;
+        }
         String pkg=root.getPackageName().toString();
         if(!pkg.equals(activePackage)) {
             // No accidental gestures against a different app or keyboard.
@@ -131,6 +137,7 @@ final class SocialFilter {
             }
             return;
         }
+        lastValidSocialRoot=now;
         JSONObject cfg=TT.equals(pkg)?ttConfig:igConfig;
         if(cfg==null) {hideBlocker();return;}
         Point size=new Point();
@@ -547,9 +554,15 @@ final class SocialFilter {
                 blockerParams.y=safe.top;
                 blockerParams.width=safe.width();
                 blockerParams.height=safe.height();
-                wm.updateViewLayout(blocker,blockerParams);
-                blockerBounds.set(safe);
-                return;
+                try {
+                    wm.updateViewLayout(blocker,blockerParams);
+                    blockerBounds.set(safe);
+                    return;
+                } catch(IllegalArgumentException staleWindow) {
+                    // Android may detach an accessibility overlay during a UI
+                    // transition; recreate only in this exceptional case.
+                    hideBlocker();
+                }
             }
             if(blocker!=null)hideBlocker();
             View v=new View(service);
