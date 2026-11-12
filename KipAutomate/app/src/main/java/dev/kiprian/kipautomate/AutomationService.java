@@ -34,6 +34,7 @@ public class AutomationService extends AccessibilityService {
     private BroadcastReceiver phoneReceiver;
     private boolean pendingPhoneUi=false;
     private long phonePendingStart=0;
+    private long phoneVisibleSince=0;
     private SocialFilter socialFilter;
 
     public static boolean isRunning() { return current != null; }
@@ -54,9 +55,11 @@ public class AutomationService extends AccessibilityService {
                     LogBook.write(AutomationService.this, "PHONE OFFHOOK — вызов поднят/набирается (Android не отличает набор от ответа)");
                     pendingPhoneUi=true;
                     phonePendingStart=android.os.SystemClock.uptimeMillis();
+                    phoneVisibleSince=0;
                     handler.postDelayed(AutomationService.this::tryPendingPhoneUi, 280);
                 } else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
                     pendingPhoneUi=false;
+                    phoneVisibleSince=0;
                     LogBook.write(AutomationService.this, "PHONE IDLE — вызов завершился");
                     if (running != null && "call_active".equals(running.trigger)) stop("Вызов завершён");
                 }
@@ -155,8 +158,15 @@ public class AutomationService extends AccessibilityService {
     private void tryPendingPhoneUi() {
         if (!pendingPhoneUi) return;
         if ("com.samsung.android.incallui".equals(foreground)) {
+            long now=android.os.SystemClock.uptimeMillis();
+            if(phoneVisibleSince==0)phoneVisibleSince=now;
+            boolean duration=hasConnectedCallTimer(getRootInActiveWindow(),0);
+            if(!duration && now-phoneVisibleSince<1300) {
+                handler.postDelayed(this::tryPendingPhoneUi,180);
+                return;
+            }
             pendingPhoneUi=false;
-            LogBook.write(this, "PHONE UI READY — запускаю активный звонок");
+            LogBook.write(this,"PHONE UI READY timer="+duration+" settledMs="+(now-phoneVisibleSince));
             fire("call_active", "");
         } else if (android.os.SystemClock.uptimeMillis()-phonePendingStart < 14000) {
             handler.postDelayed(this::tryPendingPhoneUi, 300);
@@ -164,6 +174,19 @@ public class AutomationService extends AccessibilityService {
             pendingPhoneUi=false;
             LogBook.write(this, "PHONE UI TIMEOUT — экран вызова не появился");
         }
+    }
+
+    // Avoid starting the recording action while OFFHOOK still means dialling.
+    private boolean hasConnectedCallTimer(AccessibilityNodeInfo n,int depth) {
+        if(n==null || depth>30)return false;
+        CharSequence cs=n.getText();
+        if(cs!=null && cs.toString().trim().matches("(?:[0-9]{1,2}:)?[0-9]{2}:[0-9]{2}")) {
+            Rect b=new Rect();n.getBoundsInScreen(b);
+            int h=getResources().getDisplayMetrics().heightPixels;
+            if(b.centerY()>h*.025f && b.centerY()<h*.24f)return true;
+        }
+        for(int i=0;i<n.getChildCount();i++)if(hasConnectedCallTimer(n.getChild(i),depth+1))return true;
+        return false;
     }
 
     private boolean isScreenLocked() {
@@ -192,7 +215,9 @@ public class AutomationService extends AccessibilityService {
                     step(run);
                     break;
                 case "tap":
-                    tapXY(run, action.getInt("x"), action.getInt("y"), stepNo);
+                    if(isSamsungRecordStep(run,stepNo,action))
+                        smartSamsungRecordTap(run,action.getInt("x"),action.getInt("y"),stepNo);
+                    else tapXY(run,action.getInt("x"),action.getInt("y"),stepNo);
                     break;
                 case "tap_text":
                     clickText(run, action.getString("text"), stepNo);
@@ -239,6 +264,86 @@ public class AutomationService extends AccessibilityService {
         return false;
     }
 
+    private boolean isSamsungRecordStep(ScriptRun run,int stepNo,JSONObject action) {
+        return "call_active".equals(run.trigger)&&run.name.toLowerCase(Locale.ROOT).contains("samsung")&&
+            stepNo==4&&action.optInt("x",-1)==500&&action.optInt("y",-1)==1520;
+    }
+
+    private boolean samsungStartLabel(String text) {
+        if(text==null)return false;
+        String s=text.trim().toLowerCase(Locale.ROOT);
+        if(s.contains("stop")||s.contains("pause")||s.contains("останов")||
+            s.contains("приостанов")||s.contains("beenden")||s.contains("stoppen"))return false;
+        return s.equals("записать")||s.equals("запись")||s.equals("записать разговор")||
+            s.equals("начать запись")||s.equals("запись вызова")||
+            s.equals("record")||s.equals("record call")||s.equals("start recording")||
+            s.equals("aufnehmen")||s.equals("anruf aufnehmen")||s.equals("aufzeichnen")||
+            s.equals("anruf aufzeichnen")||s.equals("aufnahme starten")||s.equals("anrufaufnahme");
+    }
+    private AccessibilityNodeInfo findSamsungStartButton(AccessibilityNodeInfo n,int depth) {
+        if(n==null||depth>35)return null;
+        CharSequence a=n.getText(), b=n.getContentDescription();
+        if((a!=null&&samsungStartLabel(a.toString()))||
+           (b!=null&&samsungStartLabel(b.toString()))) {
+            Rect r=new Rect();n.getBoundsInScreen(r);
+            if(!r.isEmpty()&&n.isVisibleToUser())return n;
+        }
+        for(int i=0;i<n.getChildCount();i++) {
+            AccessibilityNodeInfo child=findSamsungStartButton(n.getChild(i),depth+1);
+            if(child!=null)return child;
+        }
+        return null;
+    }
+    private void smartSamsungRecordTap(ScriptRun run,int fx,int fy,int stepNo) {
+        AccessibilityNodeInfo btn=findSamsungStartButton(getRootInActiveWindow(),0);
+        if(btn!=null) {
+            Rect r=new Rect();btn.getBoundsInScreen(r);
+            AccessibilityNodeInfo cur=btn;
+            for(int i=0;cur!=null&&i<5;i++,cur=cur.getParent()) {
+                if(cur.isClickable()&&cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    LogBook.write(this,"PHONE RECORD BUTTON clicked by accessibility");
+                    handler.postDelayed(this::checkSamsungRecording,1200);
+                    step(run);
+                    return;
+                }
+            }
+            LogBook.write(this,"PHONE RECORD BUTTON found at "+r.centerX()+","+r.centerY()+"; tapping center");
+            tapXY(run,r.centerX(),r.centerY(),stepNo);
+            return;
+        }
+        LogBook.write(this,"PHONE RECORD BUTTON unavailable in accessibility; fallback tap "+fx+","+fy);
+        tapXY(run,fx,fy,stepNo);
+    }
+    private boolean recordingIndicator(AccessibilityNodeInfo n,int depth) {
+        if(n==null||depth>35)return false;
+        CharSequence[] texts={n.getText(),n.getContentDescription()};
+        for(CharSequence v:texts)if(v!=null) {
+            String s=v.toString().trim().toLowerCase(Locale.ROOT);
+            if(s.contains("stop recording")||s.contains("stop record")||
+               s.contains("остановить запись")||s.contains("aufzeichnung stoppen")||
+               s.contains("aufnahme stoppen")||s.contains("aufnahme beenden")||
+               s.contains("recording in progress")||s.contains("запись идёт")||
+               s.contains("запись идет"))return true;
+        }
+        for(int i=0;i<n.getChildCount();i++)if(recordingIndicator(n.getChild(i),depth+1))return true;
+        return false;
+    }
+    private void checkSamsungRecording() {
+        if(!TelephonyManager.EXTRA_STATE_OFFHOOK.equals(lastPhoneState)) {
+            LogBook.write(this,"PHONE RECORD VERIFY: call ended, audio status not confirmed");
+            return;
+        }
+        AccessibilityNodeInfo root=getRootInActiveWindow();
+        if(root==null||root.getPackageName()==null||
+           !"com.samsung.android.incallui".contentEquals(root.getPackageName())) {
+            LogBook.write(this,"PHONE RECORD VERIFY: in-call window unavailable");return;
+        }
+        if(recordingIndicator(root,0))
+            LogBook.write(this,"PHONE RECORD VERIFY: recording indicator found");
+        else
+            LogBook.write(this,"PHONE RECORD VERIFY: UNKNOWN — gesture alone does not confirm saved audio");
+    }
+
     private void clickText(ScriptRun run, String text, int stepNo) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) {
@@ -282,6 +387,9 @@ public class AutomationService extends AccessibilityService {
                     if (handled[0] || running != run) return;
                     handled[0] = true;
                     LogBook.write(AutomationService.this, "STEP " + stepNo + " tap COMPLETED x=" + x + " y=" + y);
+                    if("call_active".equals(run.trigger) &&
+                       run.name.toLowerCase(Locale.ROOT).contains("samsung")&&stepNo==4)
+                        handler.postDelayed(AutomationService.this::checkSamsungRecording,1200);
                     step(run);
                 }
                 @Override public void onCancelled(GestureDescription description) {
