@@ -302,7 +302,7 @@ public class AutomationService extends AccessibilityService {
             for(int i=0;cur!=null&&i<5;i++,cur=cur.getParent()) {
                 if(cur.isClickable()&&cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                     LogBook.write(this,"PHONE RECORD BUTTON clicked by accessibility");
-                    handler.postDelayed(this::checkSamsungRecording,1200);
+                    handler.postDelayed(this::checkSamsungRecording,3800);
                     step(run);
                     return;
                 }
@@ -389,7 +389,7 @@ public class AutomationService extends AccessibilityService {
                     LogBook.write(AutomationService.this, "STEP " + stepNo + " tap COMPLETED x=" + x + " y=" + y);
                     if("call_active".equals(run.trigger) &&
                        run.name.toLowerCase(Locale.ROOT).contains("samsung")&&stepNo==4)
-                        handler.postDelayed(AutomationService.this::checkSamsungRecording,1200);
+                        handler.postDelayed(AutomationService.this::checkSamsungRecording,3800);
                     step(run);
                 }
                 @Override public void onCancelled(GestureDescription description) {
