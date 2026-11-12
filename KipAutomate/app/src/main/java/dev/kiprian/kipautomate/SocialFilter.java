@@ -294,7 +294,9 @@ final class SocialFilter {
     private static boolean isAd(List<Item> a,String pkg,Point s) {
         for(Item i:a) {
             if(!visible(i,s)||!shortLabel(i,s))continue;
-            if(i.rect.centerX()>s.x*.78f || i.rect.centerY()<s.y*.11f || i.rect.centerY()>s.y*.97f)continue;
+            // Instagram Reels displays some sponsored labels on the right rail.
+            float maxX=IG.equals(pkg)? .97f:.78f;
+            if(i.rect.centerX()>s.x*maxX || i.rect.centerY()<s.y*.11f || i.rect.centerY()>s.y*.97f)continue;
             if(!adWords(i.text))continue;
             if(TT.equals(pkg)) {
                 if(i.id.endsWith(":id/iar")||i.id.contains("ad_badge")||i.id.contains("sponsored")||
@@ -314,10 +316,14 @@ final class SocialFilter {
             if(!visible(i,s))continue;
             String t=i.text;
             boolean strongId=i.id.contains("live_badge")||i.id.contains("live_room")||i.id.contains("live_viewer");
-            if(strongId && i.rect.centerY()<s.y*.65f)badge=true;
-            // "LIVE" in the top navigation is always visible, even on ordinary videos.
-            if(shortLabel(i,s) && i.rect.centerY()>s.y*.12f && i.rect.centerY()<s.y*.65f &&
-               (exact(i,"live","прямой эфир","эфир","livestream")||t.startsWith("live now")))badge=true;
+            if(strongId && i.rect.centerY()<s.y*.82f)badge=true;
+            // The top navigation LIVE tab is not a live broadcast.
+            boolean videoBadge=shortLabel(i,s) && i.rect.centerY()>s.y*.16f &&
+                i.rect.centerY()<s.y*.86f && i.rect.width()<s.x*.30f &&
+                (exact(i,"live","прямой эфир","эфир","livestream","live now") ||
+                 t.startsWith("live now ") || t.startsWith("прямой эфир "));
+            if(videoBadge)badge=true;
+            if(videoBadge && (i.clickable || strongId || i.id.contains("live")))associatedUI=true;
             if(t.contains("watch live")||t.contains("join live")||t.contains("смотреть эфир")||
                t.contains("присоединиться к эфиру")||t.contains("live viewers")||
                t.contains("viewers watching")||t.contains("send gift")||
@@ -346,7 +352,14 @@ final class SocialFilter {
                t.contains("платный сериал")||t.contains("покупка сериала")||
                i.id.contains("series_purchase"))payment=true;
         }
-        return payment || (badge && hasSeriesLink(a,s));
+        // Some paid Series videos have a badge but no purchase button yet.
+        if(payment || badge)return true;
+        for(Item i:a)if(visible(i,s)&&shortLabel(i,s)&&
+                i.rect.centerY()>s.y*.17f && i.rect.centerY()<s.y*.86f &&
+                i.rect.width()<s.x*.35f &&
+                (exact(i,"series","сериалы","сериал","paid series") ||
+                 (i.id.contains("series") && i.clickable)))return true;
+        return false;
     }
     private static boolean hasSeriesLink(List<Item> a,Point s) {
         for(Item i:a)if(visible(i,s)&&shortLabel(i,s)&&
@@ -361,8 +374,10 @@ final class SocialFilter {
             String marker="";
             if(adWords(i.text))marker="AD_LABEL";
             else if(i.id.endsWith(":id/iar"))marker="TT_AD_ID";
-            else if(i.id.contains("live_badge")||i.id.contains("live_room"))marker="LIVE_ID";
-            else if(i.id.contains("series_badge")||i.id.contains("series_link"))marker="SERIES_ID";
+            else if(i.id.contains("live_badge")||i.id.contains("live_room")||i.id.contains("live_viewer"))marker="LIVE_ID";
+            else if(i.id.contains("series_badge")||i.id.contains("series_link")||i.id.contains("paid_series")||i.id.contains("series_purchase"))marker="SERIES_ID";
+            else if(i.text.contains("watch live")||i.text.contains("join live")||i.text.contains("send gift")||i.text.contains("смотреть эфир")||i.text.contains("прямой эфир"))marker="LIVE_CUE";
+            else if(i.text.contains("purchase series")||i.text.contains("unlock series")||i.text.contains("watch full series")||i.text.contains("buy episodes")||i.text.contains("купить серию"))marker="SERIES_CUE";
             else if(i.id.contains("clips_viewer")||i.id.contains("reels_viewer")||
                     i.id.contains("clips_ufi")||i.id.contains("reels_ufi"))marker="REELS_ID";
             else if(exact(i,"live","series","reels","sponsored","реклама","прямой эфир"))marker="LABEL";
