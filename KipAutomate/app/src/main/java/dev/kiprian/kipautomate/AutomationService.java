@@ -32,6 +32,8 @@ public class AutomationService extends AccessibilityService {
     private long lastAppOpenMs = 0L;
     private ScriptRun running;
     private BroadcastReceiver phoneReceiver;
+    private boolean pendingPhoneUi=false;
+    private long phonePendingStart=0;
     private SocialFilter socialFilter;
 
     public static boolean isRunning() { return current != null; }
@@ -50,8 +52,11 @@ public class AutomationService extends AccessibilityService {
                 lastPhoneState = state;
                 if (TelephonyManager.EXTRA_STATE_OFFHOOK.equals(state)) {
                     LogBook.write(AutomationService.this, "PHONE OFFHOOK — вызов поднят/набирается (Android не отличает набор от ответа)");
-                    handler.postDelayed(() -> fire("call_active", ""), 300);
+                    pendingPhoneUi=true;
+                    phonePendingStart=android.os.SystemClock.uptimeMillis();
+                    handler.postDelayed(AutomationService.this::tryPendingPhoneUi, 280);
                 } else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
+                    pendingPhoneUi=false;
                     LogBook.write(AutomationService.this, "PHONE IDLE — вызов завершился");
                     if (running != null && "call_active".equals(running.trigger)) stop("Вызов завершён");
                 }
@@ -73,6 +78,9 @@ public class AutomationService extends AccessibilityService {
         if (event == null || event.getPackageName() == null) return;
         String pkg = event.getPackageName().toString();
         foreground = pkg;
+        if (pendingPhoneUi && "com.samsung.android.incallui".equals(pkg)) {
+            handler.postDelayed(this::tryPendingPhoneUi, 80);
+        }
         if (socialFilter != null) socialFilter.onEvent(event);
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !pkg.equals(lastAppOpened)) {
             long now = System.currentTimeMillis();
@@ -86,6 +94,7 @@ public class AutomationService extends AccessibilityService {
 
     @Override public void onInterrupt() { LogBook.write(this, "SERVICE INTERRUPTED"); }
     @Override public void onDestroy() {
+        pendingPhoneUi=false;
         stop("Служба отключена");
         if (socialFilter != null) socialFilter.shutdown();
         current = null;
@@ -96,7 +105,8 @@ public class AutomationService extends AccessibilityService {
 
     public void runManual() { fire("manual", ""); }
     public void reloadSocialFilters() { if (socialFilter != null) socialFilter.reload(); }
-    public boolean toggleSocialPaused() { if (socialFilter == null) return false; socialFilter.togglePaused(); return socialFilter.isPaused(); }
+    public boolean toggleSocialPaused() {if (socialFilter != null) {socialFilter.togglePaused();return socialFilter.isPaused();}return false;}
+    public boolean socialPaused() {return socialFilter!=null && socialFilter.isPaused();}
     public void stop(String reason) {
         ScriptRun prev = running;
         if (prev != null) {
@@ -138,6 +148,21 @@ public class AutomationService extends AccessibilityService {
             }
         } catch (Exception e) {
             LogBook.write(this, "TRIGGER ERROR: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    /** Wait for Samsung in-call UI. OFFHOOK alone can mean that the number is still dialing. */
+    private void tryPendingPhoneUi() {
+        if (!pendingPhoneUi) return;
+        if ("com.samsung.android.incallui".equals(foreground)) {
+            pendingPhoneUi=false;
+            LogBook.write(this, "PHONE UI READY — запускаю активный звонок");
+            fire("call_active", "");
+        } else if (android.os.SystemClock.uptimeMillis()-phonePendingStart < 14000) {
+            handler.postDelayed(this::tryPendingPhoneUi, 300);
+        } else {
+            pendingPhoneUi=false;
+            LogBook.write(this, "PHONE UI TIMEOUT — экран вызова не появился");
         }
     }
 
