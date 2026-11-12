@@ -1,7 +1,7 @@
-name: Build KipAutomate APK
+name: Build unsigned KipAutomate v0.2 APK
 on:
   push:
-    branches: [kipautomate-social-v02]
+    branches: [kipautomate-unified-v02]
   workflow_dispatch:
 
 jobs:
@@ -21,22 +21,24 @@ jobs:
       - name: Install Android SDK 35
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          find "$ANDROID_HOME" -maxdepth 3 -name sdkmanager -type f || true
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)"
           test -n "$SDKMANAGER"
-          "$SDKMANAGER" --version
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Build debug APK
+      - name: Build unsigned release APK
         working-directory: KipAutomate
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-      - name: Verify APK
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
+      - name: Stage build and signer for local private signing
+        shell: bash
         run: |
-          test -s KipAutomate/app/build/outputs/apk/debug/app-debug.apk
-          sha256sum KipAutomate/app/build/outputs/apk/debug/app-debug.apk
+          set -e
+          mkdir -p release-output
+          cp KipAutomate/app/build/outputs/apk/release/app-release-unsigned.apk release-output/KipAutomate-v0.2-unsigned.apk
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" release-output/apksigner.jar
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" release-output/zipalign
+          sha256sum release-output/*
       - uses: actions/upload-artifact@v4
         with:
-          name: KipAutomate-v0.2-debug-apk
-          path: KipAutomate/app/build/outputs/apk/debug/app-debug.apk
+          name: KipAutomate-v0.2-unsigned-tools
+          path: release-output/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
