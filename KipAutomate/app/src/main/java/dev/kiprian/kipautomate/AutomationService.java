@@ -161,11 +161,15 @@ public class AutomationService extends AccessibilityService {
             long now=android.os.SystemClock.uptimeMillis();
             if(phoneVisibleSince==0)phoneVisibleSince=now;
             boolean duration=hasConnectedCallTimer(getRootInActiveWindow(),0);
-            if(!duration && now-phoneVisibleSince<1300) {
+            // Wait briefly for the connected-call duration to appear.
+            // Samsung emits OFFHOOK during dialling, which is too early to
+            // open More/Record. Keep a bounded fallback if the timer is hidden.
+            if(!duration && now-phoneVisibleSince<2200) {
                 handler.postDelayed(this::tryPendingPhoneUi,180);
                 return;
             }
             pendingPhoneUi=false;
+            if(!duration) LogBook.write(this,"PHONE TIMER NOT VISIBLE — trying after 2.2 seconds; connected call not confirmed");
             LogBook.write(this,"PHONE UI READY timer="+duration+" settledMs="+(now-phoneVisibleSince));
             fire("call_active", "");
         } else if (android.os.SystemClock.uptimeMillis()-phonePendingStart < 14000) {
@@ -215,7 +219,9 @@ public class AutomationService extends AccessibilityService {
                     step(run);
                     break;
                 case "tap":
-                    if(isSamsungRecordStep(run,stepNo,action))
+                    if(isSamsungMoreStep(run,stepNo,action))
+                        smartSamsungMoreTap(run,action.getInt("x"),action.getInt("y"),stepNo);
+                    else if(isSamsungRecordStep(run,stepNo,action))
                         smartSamsungRecordTap(run,action.getInt("x"),action.getInt("y"),stepNo);
                     else tapXY(run,action.getInt("x"),action.getInt("y"),stepNo);
                     break;
@@ -262,6 +268,51 @@ public class AutomationService extends AccessibilityService {
             if (nodeContains(node.getChild(i), wanted, depth + 1)) return true;
         }
         return false;
+    }
+
+    private boolean isSamsungMoreStep(ScriptRun run,int stepNo,JSONObject action) {
+        return "call_active".equals(run.trigger)&&run.name.toLowerCase(Locale.ROOT).contains("samsung")&&
+            stepNo==2&&action.optInt("x",-1)==1112&&action.optInt("y",-1)==2265;
+    }
+    private boolean samsungMoreLabel(String text) {
+        if(text==null) return false;
+        String t=text.trim().toLowerCase(Locale.ROOT);
+        return t.equals("more")||t.equals("more options")||t.equals("ещё")||
+            t.equals("еще")||t.equals("mehr")||t.equals("weitere")||
+            t.equals("weitere optionen");
+    }
+    private AccessibilityNodeInfo findSamsungMoreButton(AccessibilityNodeInfo n,int depth) {
+        if(n==null||depth>35)return null;
+        CharSequence a=n.getText(), b=n.getContentDescription();
+        if((a!=null&&samsungMoreLabel(a.toString())) ||
+           (b!=null&&samsungMoreLabel(b.toString()))) {
+            Rect r=new Rect();n.getBoundsInScreen(r);
+            if(!r.isEmpty()&&n.isVisibleToUser())return n;
+        }
+        for(int i=0;i<n.getChildCount();i++) {
+            AccessibilityNodeInfo child=findSamsungMoreButton(n.getChild(i),depth+1);
+            if(child!=null)return child;
+        }
+        return null;
+    }
+    private void smartSamsungMoreTap(ScriptRun run,int x,int y,int stepNo) {
+        AccessibilityNodeInfo btn=findSamsungMoreButton(getRootInActiveWindow(),0);
+        if(btn!=null) {
+            Rect r=new Rect();btn.getBoundsInScreen(r);
+            AccessibilityNodeInfo cur=btn;
+            for(int j=0;cur!=null&&j<5;j++,cur=cur.getParent()) {
+                if(cur.isClickable()&&cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    LogBook.write(this,"PHONE MORE BUTTON clicked by accessibility");
+                    step(run);
+                    return;
+                }
+            }
+            LogBook.write(this,"PHONE MORE BUTTON found at "+r.centerX()+","+r.centerY()+"; tapping centre");
+            tapXY(run,r.centerX(),r.centerY(),stepNo);
+            return;
+        }
+        LogBook.write(this,"PHONE MORE BUTTON not exposed; fallback coordinates");
+        tapXY(run,x,y,stepNo);
     }
 
     private boolean isSamsungRecordStep(ScriptRun run,int stepNo,JSONObject action) {
