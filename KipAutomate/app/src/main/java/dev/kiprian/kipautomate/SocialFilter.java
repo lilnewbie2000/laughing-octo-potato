@@ -35,6 +35,9 @@ final class SocialFilter {
     private View blocker;
     private WindowManager.LayoutParams blockerParams;
     private final Rect blockerBounds = new Rect();
+    private final Rect lastTikTokCommentBounds = new Rect();
+    private String blockerPackage="";
+    private long lastTikTokCommentAt=0;
     private long lastTick=0, lastSwipe=0, lastBack=0, lastReelSeen=0, lastDiagnostic=0;
     private String lastCandidate="", lastDecision="";
     private long candidateSince=0, lastDecisionTime=0;
@@ -149,8 +152,36 @@ final class SocialFilter {
                 return;
             }
             Item button=(TT.equals(pkg)||reels)?findCommentButton(items,pkg,size):null;
-            if(cfg.optBoolean("overlayComments",true) && button!=null) showBlocker(button.rect,pkg);
-            else hideBlocker();
+            if(cfg.optBoolean("overlayComments",true)) {
+                if(button!=null) {
+                    if(TT.equals(pkg)) {
+                        // Ignore transient, animated nodes far from the real
+                        // comment rail. Do not move the blocker onto random UI.
+                        float y=(float)button.rect.centerY()/size.y;
+                        if(y>.49f && y<.80f) {
+                            lastTikTokCommentBounds.set(button.rect);
+                            lastTikTokCommentAt=now;
+                            showBlocker(button.rect,pkg);
+                        } else if(blocker!=null) {
+                            // Keep the shield on the last known button position.
+                        }
+                    } else showBlocker(button.rect,pkg);
+                } else if(TT.equals(pkg) && isTikTokForYouFeed(items,size)) {
+                    // During video transitions the accessibility comment node
+                    // disappears for 200-800ms. Keep an invisible shield in
+                    // place instead of exposing the button while it loads.
+                    if(blocker==null || !TT.equals(blockerPackage)) {
+                        Rect predicted=lastTikTokCommentBounds.isEmpty() ?
+                            new Rect((int)(size.x*.80f),(int)(size.y*.592f),
+                                     size.x,(int)(size.y*.664f))
+                            : new Rect(lastTikTokCommentBounds);
+                        showBlocker(predicted,pkg);
+                    }
+                } else if(TT.equals(pkg) && blocker!=null &&
+                        TT.equals(blockerPackage) && now-lastTikTokCommentAt<1200) {
+                    // Short transition without feed metadata: keep the last shield.
+                } else hideBlocker();
+            } else hideBlocker();
         } else hideBlocker();
 
         // Record a brief, privacy-conscious diagnosis even if we fail to recognize a video.
@@ -181,7 +212,9 @@ final class SocialFilter {
             return;
         }
         if(now-candidateSince<Math.max(150,cfg.optInt("stableMs",180))) return;
-        lastSwipe=now;resetCandidate();hideBlocker();swipeUp(pkg,reason,size);
+        lastSwipe=now;resetCandidate();
+        // Swiping in the center must not remove the right-side touch shield.
+        swipeUp(pkg,reason,size);
     }
 
     private static final class Item {
@@ -281,6 +314,16 @@ final class SocialFilter {
         }
         return input && head;
     }
+    private static boolean isTikTokForYouFeed(List<Item> a,Point s) {
+        for(Item i:a) {
+            if(!visible(i,s)||i.rect.centerY()>s.y*.19f)continue;
+            String t=i.text;
+            if(t.equals("for you")||t.equals("для вас")||
+               t.equals("für dich")||t.equals("pour toi")||
+               t.equals("para ti"))return true;
+        }
+        return false;
+    }
     private static boolean shortLabel(Item i,Point s) {
         return !i.editable && i.rect.width()<s.x*.64f &&
             i.rect.height()<s.y*.12f && i.text.length()<90;
@@ -305,7 +348,11 @@ final class SocialFilter {
         for(Item i:a) {
             if(!visible(i,s) || i.rect.centerY()<s.y*.19f)continue;
             String t=i.text.trim();
-            if(t.startsWith("shop now") || t.startsWith("learn more") ||
+            if(t.startsWith("check it out") || t.startsWith("watch now") ||
+               t.startsWith("discover more") || t.startsWith("explore now") ||
+               t.startsWith("see more") || t.startsWith("try now") ||
+               t.startsWith("get yours") || t.startsWith("shop now") ||
+               t.startsWith("learn more") ||
                t.startsWith("download now") || t.startsWith("install now") ||
                t.startsWith("order now") || t.startsWith("buy now") ||
                t.startsWith("sign up") || t.startsWith("visit website") ||
@@ -318,29 +365,39 @@ final class SocialFilter {
         return false;
     }
     private static boolean isAd(List<Item> a,String pkg,Point s) {
+        // TikTok ads repeatedly display a compact "Ad" disclosure below the
+        // advertiser's name. User names can also be "ad", so this *alone* is
+        // not enough unless the disclosure is in the lower ad-label region.
+        // A genuine commerce CTA (Check it out / Watch now / Learn more, ...)
+        // also corroborates a higher label.
         boolean cta=TT.equals(pkg) && commercialCallToAction(a,s);
         for(Item i:a) {
-            if(!visible(i,s)||!shortLabel(i,s))continue;
-            float maxX=IG.equals(pkg)? .97f : .78f;
-            if(i.rect.centerX()>s.x*maxX ||
-                i.rect.centerY()<s.y*.11f || i.rect.centerY()>s.y*.97f)continue;
+            if(!visible(i,s)||!shortLabel(i,s)) continue;
+            float cx=(float)i.rect.centerX()/s.x;
+            float cy=(float)i.rect.centerY()/s.y;
+            if(cx>(IG.equals(pkg)?.97f:.78f) || cy<.11f || cy>.97f)continue;
             if(!adWords(i.text))continue;
-            if(TT.equals(pkg)) {
-                // A video with creator name "ad" was incorrectly skipped in v0.5.
-                // Never auto-skip on that word alone, even if it remains stable.
-                if(i.text.trim().equals("ad")) {
-                    if(strongAdResourceId(i.id) && cta)return true;
-                    continue;
-                }
-                if(explicitSponsoredText(i.text)) {
-                    // Distinct platform disclosure, but avoid generic captions
-                    // unless the view has promotional semantics or an actual CTA.
-                    if(strongAdResourceId(i.id) || cta)return true;
-                }
-            } else if(IG.equals(pkg)) {
-                // Instagram sponsored labels can appear on the right rail.
+            if(IG.equals(pkg)) {
+                // Reels is checked separately; its disclosure can be on the right.
                 if(i.text.length()<=55)return true;
+                continue;
             }
+            String label=i.text.trim();
+            boolean compactDisclosure=i.rect.width()<s.x*.20f &&
+                    i.rect.height()<s.y*.055f && cx<.38f;
+            boolean lowerDisclosure=cy>=.795f && cy<.95f && compactDisclosure;
+            boolean corroborated=cta && cy>.68f && cx<.45f;
+            if(label.equals("ad")) {
+                // Unlike v0.6, do not require BOTH a specific view ID and CTA.
+                // This restores valid Ads without returning to username-only skips.
+                if((lowerDisclosure && !i.clickable) ||
+                   (lowerDisclosure && strongAdResourceId(i.id)) ||
+                   (corroborated && compactDisclosure))return true;
+                continue;
+            }
+            if(explicitSponsoredText(label) &&
+               (strongAdResourceId(i.id) || corroborated ||
+                (lowerDisclosure && !i.clickable)))return true;
         }
         return false;
     }
@@ -470,20 +527,29 @@ final class SocialFilter {
         }catch(Exception e){gestureBusy=false;LogBook.write(service,"SOCIAL SWIPE ERROR: "+e.getMessage());}
     }
     private void showBlocker(Rect r,String pkg) {
-        if(overlayFailed || wm==null || r==null || r.isEmpty()) return;
-        // Accessibility sometimes reports only the glyph, not its whole tap area.
+        if(overlayFailed || wm==null || r==null || r.isEmpty())return;
         Rect safe=new Rect(r);
         int minPx=(int)(48*service.getResources().getDisplayMetrics().density);
-        if(safe.width()<minPx) safe.inset(-(minPx-safe.width())/2,0);
-        if(safe.height()<minPx) safe.inset(0,-(minPx-safe.height())/2);
-        if(blocker!=null && blockerBounds.equals(safe))return;
-        hideBlocker();
+        if(safe.width()<minPx)safe.inset(-(minPx-safe.width())/2,0);
+        if(safe.height()<minPx)safe.inset(0,-(minPx-safe.height())/2);
+        if(blocker!=null && blockerBounds.equals(safe) && pkg.equals(blockerPackage))return;
         try {
-            // 100% visually transparent touch shield: no cross, box, tint, or border.
+            if(blocker!=null && pkg.equals(blockerPackage) && blockerParams!=null) {
+                // Update the attached view in-place. Previously removing and
+                // re-adding it for every changed rect caused touch gaps.
+                blockerParams.x=safe.left;
+                blockerParams.y=safe.top;
+                blockerParams.width=safe.width();
+                blockerParams.height=safe.height();
+                wm.updateViewLayout(blocker,blockerParams);
+                blockerBounds.set(safe);
+                return;
+            }
+            if(blocker!=null)hideBlocker();
             View v=new View(service);
             v.setBackgroundColor(Color.TRANSPARENT);
             v.setOnTouchListener((view,event)->{
-                if(event.getAction()==MotionEvent.ACTION_DOWN){
+                if(event.getAction()==MotionEvent.ACTION_DOWN) {
                     blockedTaps++;
                     LogBook.write(service,"SOCIAL COMMENT TAP BLOCKED "+pkg+" count="+blockedTaps);
                 }
@@ -491,17 +557,25 @@ final class SocialFilter {
             });
             WindowManager.LayoutParams lp=new WindowManager.LayoutParams(safe.width(),safe.height(),
                     WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     android.graphics.PixelFormat.TRANSLUCENT);
-            lp.gravity=Gravity.TOP|Gravity.LEFT;lp.x=safe.left;lp.y=safe.top;
-            wm.addView(v,lp);blocker=v;blockerParams=lp;blockerBounds.set(safe);
+            lp.gravity=Gravity.TOP|Gravity.LEFT;
+            lp.x=safe.left;lp.y=safe.top;
+            wm.addView(v,lp);
+            blocker=v;blockerParams=lp;blockerBounds.set(safe);blockerPackage=pkg;
             LogBook.write(service,"SOCIAL BLOCKER ON "+pkg+" invisible=true bounds="+safe.toShortString());
-        }catch(Exception e){
-            overlayFailed=true;blocker=null;blockerBounds.setEmpty();
-            LogBook.write(service,"SOCIAL BLOCKER ERROR: "+e.getMessage());
+        }catch(Exception e) {
+            overlayFailed=true;
+            hideBlocker();
+            LogBook.write(service,"SOCIAL BLOCKER ERROR "+e.getClass().getSimpleName()+": "+e.getMessage());
         }
     }
     private void hideBlocker() {
-        if(blocker!=null){try{wm.removeViewImmediate(blocker);}catch(Exception ignored){}blocker=null;blockerBounds.setEmpty();}
+        if(blocker!=null) {
+            try{wm.removeViewImmediate(blocker);}catch(Exception ignored){}
+        }
+        blocker=null;blockerParams=null;blockerPackage="";blockerBounds.setEmpty();
     }
 }
