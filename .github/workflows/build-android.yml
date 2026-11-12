@@ -1,7 +1,7 @@
-name: Build unsigned KipAutomate v0.6 APK
+name: Build unsigned KipAutomate v0.7 APK
 on:
   push:
-    branches: [kipautomate-unified-v06]
+    branches: [kipautomate-unified-v07]
   workflow_dispatch:
 
 jobs:
@@ -32,13 +32,13 @@ jobs:
         run: |
           set -e
           mkdir -p release-output
-          cp KipAutomate/app/build/outputs/apk/release/app-release-unsigned.apk release-output/KipAutomate-v0.6-unsigned.apk
+          cp KipAutomate/app/build/outputs/apk/release/app-release-unsigned.apk release-output/KipAutomate-v0.7-unsigned.apk
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" release-output/apksigner.jar
           cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" release-output/zipalign
           sha256sum release-output/*
       - uses: actions/upload-artifact@v4
         with:
-          name: KipAutomate-v0.6-unsigned-tools
+          name: KipAutomate-v0.7-unsigned-tools
           path: release-output/*
           if-no-files-found: error
           retention-days: 14
