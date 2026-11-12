@@ -288,23 +288,57 @@ final class SocialFilter {
     private static boolean adWords(String t) {
         if(t==null) return false;
         t=t.trim();
-        // Whole leading word only: "adventure" and "add comments" must not match "ad".
         return t.matches("(?s)^(?:ad|advertisement|sponsored|promoted|gesponsert|anzeige|реклама|рекламный контент|paid partnership)(?:$|[\\s·•:—-].*)");
     }
+    private static boolean explicitSponsoredText(String t) {
+        if(t==null)return false;
+        // "ad" alone is ambiguous: it can be a username or caption on an organic clip.
+        // Require a full distinctive promotional label to avoid false TikTok swipes.
+        return t.trim().matches("(?s)^(?:advertisement|sponsored|promoted|gesponsert|anzeige|реклама|рекламный контент|paid partnership)(?:$|[\\s·•:—-].*)");
+    }
+    private static boolean strongAdResourceId(String id) {
+        return id.endsWith(":id/iar") || id.contains("ad_badge") ||
+            id.contains("sponsored") || id.contains("ad_label") ||
+            id.contains("ad_tag") || id.contains("promotion_badge");
+    }
+    private static boolean commercialCallToAction(List<Item> a,Point s) {
+        for(Item i:a) {
+            if(!visible(i,s) || i.rect.centerY()<s.y*.19f)continue;
+            String t=i.text.trim();
+            if(t.startsWith("shop now") || t.startsWith("learn more") ||
+               t.startsWith("download now") || t.startsWith("install now") ||
+               t.startsWith("order now") || t.startsWith("buy now") ||
+               t.startsWith("sign up") || t.startsWith("visit website") ||
+               t.startsWith("jetzt kaufen") || t.startsWith("mehr erfahren") ||
+               t.startsWith("jetzt installieren") || t.startsWith("купить сейчас") ||
+               t.startsWith("перейти на сайт") || t.startsWith("скачать"))return true;
+            if(i.id.contains("ad_cta") || i.id.contains("sponsored_cta") ||
+               i.id.contains("ad_action_button"))return true;
+        }
+        return false;
+    }
     private static boolean isAd(List<Item> a,String pkg,Point s) {
+        boolean cta=TT.equals(pkg) && commercialCallToAction(a,s);
         for(Item i:a) {
             if(!visible(i,s)||!shortLabel(i,s))continue;
-            // Instagram Reels displays some sponsored labels on the right rail.
-            float maxX=IG.equals(pkg)? .97f:.78f;
-            if(i.rect.centerX()>s.x*maxX || i.rect.centerY()<s.y*.11f || i.rect.centerY()>s.y*.97f)continue;
+            float maxX=IG.equals(pkg)? .97f : .78f;
+            if(i.rect.centerX()>s.x*maxX ||
+                i.rect.centerY()<s.y*.11f || i.rect.centerY()>s.y*.97f)continue;
             if(!adWords(i.text))continue;
             if(TT.equals(pkg)) {
-                if(i.id.endsWith(":id/iar")||i.id.contains("ad_badge")||i.id.contains("sponsored")||
-                   i.id.contains("ad_label")||i.id.contains("ad_tag"))return true;
-                // Fallback for TikTok UI variations where the exact ID changes.
-                if(i.text.length()<=45 && i.rect.centerY()>s.y*.22f)return true;
+                // A video with creator name "ad" was incorrectly skipped in v0.5.
+                // Never auto-skip on that word alone, even if it remains stable.
+                if(i.text.trim().equals("ad")) {
+                    if(strongAdResourceId(i.id) && cta)return true;
+                    continue;
+                }
+                if(explicitSponsoredText(i.text)) {
+                    // Distinct platform disclosure, but avoid generic captions
+                    // unless the view has promotional semantics or an actual CTA.
+                    if(strongAdResourceId(i.id) || cta)return true;
+                }
             } else if(IG.equals(pkg)) {
-                // Called only after a strong Instagram Reels identification.
+                // Instagram sponsored labels can appear on the right rail.
                 if(i.text.length()<=55)return true;
             }
         }
@@ -384,6 +418,7 @@ final class SocialFilter {
             if(i.text.contains("tap to watch live") || i.text.contains("tap to join live") ||
                i.text.contains("tap to view live"))marker="LIVE_PREVIEW_CTA";
             else if(i.text.contains("live now") && i.rect.centerY()>s.y*.48f)marker="LIVE_NOW";
+            else if(i.text.trim().equals("ad"))marker="AMBIGUOUS_AD_TEXT";
             else if(adWords(i.text))marker="AD_LABEL";
             else if(i.id.endsWith(":id/iar"))marker="TT_AD_ID";
             else if(i.id.contains("live_badge")||i.id.contains("live_room")||i.id.contains("live_viewer"))marker="LIVE_ID";
