@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <application
         android:allowBackup="false"
-        android:label="KipAutomate"
+        android:label="KipAutomate Social"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
@@ -19,7 +19,7 @@
             android:name=".AutomationService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
-            android:label="KipAutomate · управление интерфейсом">
+            android:label="KipAutomate Social · управление интерфейсом">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
