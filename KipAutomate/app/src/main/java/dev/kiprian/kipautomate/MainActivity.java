@@ -25,6 +25,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.json.JSONArray;
+import org.json.JSONObject;
 import org.json.JSONException;
 
 public class MainActivity extends Activity {
@@ -64,7 +65,7 @@ public class MainActivity extends Activity {
         main.addView(kicker);
         TextView title = text("KipAutomate", 30, TEXT, true);
         main.addView(title, bottom(1));
-        TextView sub = text("Сценарии в JSON • без облака • без рекламы", 13, MUTED, false);
+        TextView sub = text("v0.2 • звонки • TikTok • Instagram Reels", 13, MUTED, false);
         main.addView(sub, bottom(22));
 
         LinearLayout statusCard = card();
@@ -155,6 +156,20 @@ public class MainActivity extends Activity {
                 .show());
         copy.setOnClickListener(v -> copyText(editor.getText().toString(), "Сценарий скопирован"));
 
+        TextView socialHeading = text("Фильтры TikTok / Instagram", 21, TEXT, true);
+        main.addView(socialHeading, bottom(5));
+        TextView socialHelp = text("Добавляет два фоновых сценария, не затрагивая существующую запись Samsung. Работают, пока открыто нужное приложение.", 13, MUTED, false);
+        main.addView(socialHelp, bottom(10));
+        Button addFilters = button("Добавить фильтры TikTok + Reels", true);
+        main.addView(addFilters, bottom(8));
+        addFilters.setOnClickListener(v -> addSocialFilters());
+        Button pauseFilters = button("Пауза / включить фильтры", false);
+        main.addView(pauseFilters, bottom(16));
+        pauseFilters.setOnClickListener(v -> {
+            AutomationService s = AutomationService.instance();
+            if (s == null) { toast("Сначала включи Accessibility"); return; }
+            toast(s.toggleSocialPaused() ? "Фильтры приостановлены" : "Фильтры включены");
+        });
         TextView logsHead = text("Диагностика", 21, TEXT, true);
         main.addView(logsHead, bottom(6));
         TextView logsDesc = text("Каждый шаг пишет START / COMPLETED / CANCELLED или конкретную ошибку. Ни один жест не исчезает молча при импорте: сценарии — обычный текст.", 13, MUTED, false);
@@ -170,9 +185,31 @@ public class MainActivity extends Activity {
         clear.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Очистить журнал?")
                 .setNegativeButton("Отмена", null).setPositiveButton("Очистить", (d,w) -> {LogBook.clear(this); toast("Журнал очищен");}).show());
 
-        TextView safety = text("Важно: доступ к экрану включает чтение элементов открытых приложений. Автоматическая запись звонков может регулироваться законом; получай согласие участников. При блокировке экрана жесты обычно не работают. Версия 0.1 — экспериментальная.", 12, MUTED, false);
+        TextView safety = text("Важно: доступ к экрану включает чтение элементов открытых приложений. Автоматическая запись звонков может регулироваться законом; получай согласие участников. При блокировке экрана жесты обычно не работают. Версия 0.2 — экспериментальная.", 12, MUTED, false);
         main.addView(safety);
         return scroll;
+    }
+
+    private void addSocialFilters() {
+        try {
+            JSONArray existing=ScriptStore.validate(editor.getText().toString());
+            JSONArray extras=ScriptStore.socialTemplates();
+            int added=0;
+            for (int i=0;i<extras.length();i++) {
+                JSONObject extra=extras.getJSONObject(i);
+                String packageName=extra.getJSONObject("trigger").getString("package");
+                boolean found=false;
+                for (int j=0;j<existing.length();j++) {
+                    JSONObject old=existing.getJSONObject(j);
+                    JSONObject trigger=old.optJSONObject("trigger");
+                    if (trigger!=null && "monitor".equals(trigger.optString("type")) &&
+                         packageName.equals(trigger.optString("package"))) { found=true;break; }
+                }
+                if(!found) { existing.put(extra);added++; }
+            }
+            editor.setText(existing.toString(2));
+            if(validateEditor(true)) toast(added==0?"Фильтры уже добавлены":"Добавлено фильтров: "+added);
+        } catch (Exception e) {toast("Ошибка установки фильтров: "+e.getMessage());}
     }
 
     private boolean validateEditor(boolean save) {
@@ -182,6 +219,8 @@ public class MainActivity extends Activity {
             if (save) {
                 ScriptStore.write(this, input);
                 LogBook.write(this, "SCRIPTS SAVED — " + scripts.length() + " сценариев");
+                AutomationService s = AutomationService.instance();
+                if (s != null) s.reloadSocialFilters();
             }
             scriptCount.setText("✓ Синтаксис верный · сценариев: " + scripts.length());
             scriptCount.setTextColor(GREEN);

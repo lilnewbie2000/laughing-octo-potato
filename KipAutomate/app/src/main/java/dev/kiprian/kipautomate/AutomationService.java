@@ -32,6 +32,7 @@ public class AutomationService extends AccessibilityService {
     private long lastAppOpenMs = 0L;
     private ScriptRun running;
     private BroadcastReceiver phoneReceiver;
+    private SocialFilter socialFilter;
 
     public static boolean isRunning() { return current != null; }
     public static AutomationService instance() { return current; }
@@ -39,6 +40,7 @@ public class AutomationService extends AccessibilityService {
     @Override public void onServiceConnected() {
         super.onServiceConnected();
         current = this;
+        socialFilter = new SocialFilter(this, handler);
         LogBook.write(this, "SERVICE START — служба Accessibility подключена");
         phoneReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
@@ -71,6 +73,7 @@ public class AutomationService extends AccessibilityService {
         if (event == null || event.getPackageName() == null) return;
         String pkg = event.getPackageName().toString();
         foreground = pkg;
+        if (socialFilter != null) socialFilter.onEvent(event);
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !pkg.equals(lastAppOpened)) {
             long now = System.currentTimeMillis();
             if (now - lastAppOpenMs >= 500 || !pkg.equals(lastAppOpened)) {
@@ -84,6 +87,7 @@ public class AutomationService extends AccessibilityService {
     @Override public void onInterrupt() { LogBook.write(this, "SERVICE INTERRUPTED"); }
     @Override public void onDestroy() {
         stop("Служба отключена");
+        if (socialFilter != null) socialFilter.shutdown();
         current = null;
         if (phoneReceiver != null) try { unregisterReceiver(phoneReceiver); } catch (Exception ignored) {}
         LogBook.write(this, "SERVICE STOP");
@@ -91,6 +95,8 @@ public class AutomationService extends AccessibilityService {
     }
 
     public void runManual() { fire("manual", ""); }
+    public void reloadSocialFilters() { if (socialFilter != null) socialFilter.reload(); }
+    public boolean toggleSocialPaused() { if (socialFilter == null) return false; socialFilter.togglePaused(); return socialFilter.isPaused(); }
     public void stop(String reason) {
         ScriptRun prev = running;
         if (prev != null) {

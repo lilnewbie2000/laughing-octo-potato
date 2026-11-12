@@ -1,0 +1,41 @@
+[
+  {
+    "name": "TikTok — комментарии, реклама, LIVE, Series",
+    "enabled": true,
+    "trigger": {
+      "type": "monitor",
+      "package": "com.zhiliaoapp.musically"
+    },
+    "actions": [
+      {
+        "type": "social_filter",
+        "blockComments": true,
+        "overlayComments": true,
+        "skipAds": true,
+        "skipLive": true,
+        "skipSeries": true,
+        "stableMs": 180
+      }
+    ]
+  },
+  {
+    "name": "Instagram Reels — комментарии и реклама",
+    "enabled": true,
+    "trigger": {
+      "type": "monitor",
+      "package": "com.instagram.android"
+    },
+    "actions": [
+      {
+        "type": "social_filter",
+        "blockComments": true,
+        "overlayComments": true,
+        "skipAds": true,
+        "skipLive": false,
+        "skipSeries": false,
+        "stableMs": 180,
+        "onlyReels": true
+      }
+    ]
+  }
+]

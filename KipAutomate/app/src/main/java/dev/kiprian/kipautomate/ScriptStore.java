@@ -37,6 +37,10 @@ public final class ScriptStore {
                 "]";
     }
 
+    public static JSONArray socialTemplates() throws JSONException {
+        return new JSONArray("[{\"name\":\"TikTok — комментарии, реклама, LIVE, Series\",\"enabled\":true,\"trigger\":{\"type\":\"monitor\",\"package\":\"com.zhiliaoapp.musically\"},\"actions\":[{\"type\":\"social_filter\",\"blockComments\":true,\"overlayComments\":true,\"skipAds\":true,\"skipLive\":true,\"skipSeries\":true,\"stableMs\":180}]},{\"name\":\"Instagram Reels — комментарии и реклама\",\"enabled\":true,\"trigger\":{\"type\":\"monitor\",\"package\":\"com.instagram.android\"},\"actions\":[{\"type\":\"social_filter\",\"blockComments\":true,\"overlayComments\":true,\"skipAds\":true,\"skipLive\":false,\"skipSeries\":false,\"stableMs\":180,\"onlyReels\":true}]}]");
+    }
+
     public static String read(Context context) {
         SharedPreferences preferences = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         return preferences.getString(KEY, template());
@@ -55,16 +59,21 @@ public final class ScriptStore {
             if (script.optString("name").trim().isEmpty()) throw new JSONException("Нет имени сценария #" + (i + 1));
             JSONObject trigger = script.getJSONObject("trigger");
             String t = trigger.getString("type");
-            if (!t.equals("manual") && !t.equals("call_active") && !t.equals("app_open"))
+            if (!t.equals("manual") && !t.equals("call_active") && !t.equals("app_open") && !t.equals("monitor"))
                 throw new JSONException("Неизвестный триггер: " + t);
-            if (t.equals("app_open") && trigger.optString("package").isEmpty())
+            if ((t.equals("app_open") || t.equals("monitor")) && trigger.optString("package").isEmpty())
                 throw new JSONException("Для app_open требуется trigger.package");
             JSONArray actions = script.getJSONArray("actions");
+            if ("monitor".equals(t) && actions.length()!=1) throw new JSONException("monitor требует ровно одно действие social_filter");
             if (actions.length() > 100) throw new JSONException("Не более 100 действий в сценарии");
             for (int j = 0; j < actions.length(); j++) {
                 JSONObject action = actions.getJSONObject(j);
                 String type = action.getString("type");
                 switch (type) {
+                    case "social_filter":
+                        if (!"monitor".equals(t)) throw new JSONException("social_filter требует trigger monitor");
+                        range(action.optInt("stableMs",180),120,3000,"stableMs");
+                        break;
                     case "wait":
                         range(action.getInt("ms"), 0, 60000, "wait.ms"); break;
                     case "tap":
