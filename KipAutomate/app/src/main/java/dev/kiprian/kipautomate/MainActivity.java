@@ -11,6 +11,15 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.os.Build;
+import java.util.Locale;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
@@ -40,6 +49,21 @@ public class MainActivity extends Activity {
     private TextView serviceStatus;
     private TextView permissionStatus;
     private TextView scriptCount;
+    private TextView recorderStatus;
+    private TextView recorderDiagStatus;
+    private Button recorderArmButton, recorderStopButton;
+    private final Handler recorderUiHandler=new Handler(Looper.getMainLooper());
+    private final Runnable recorderUiPoll=new Runnable() {
+        @Override public void run() {
+            refreshRecorderUi();
+            recorderUiHandler.postDelayed(this,750);
+        }
+    };
+    private SensorManager diagSensorManager;
+    private SensorEventListener diagListener;
+    private boolean diagRunning=false, diagPassed=false;
+    private long diagStart=0, diagDownSince=0, diagLastLog=0;
+    private Runnable diagTimeout;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -50,7 +74,17 @@ public class MainActivity extends Activity {
         refreshStatus();
     }
 
-    @Override protected void onResume() { super.onResume(); refreshStatus(); }
+    @Override protected void onResume() {
+        super.onResume();
+        refreshStatus();
+        recorderUiHandler.removeCallbacks(recorderUiPoll);
+        recorderUiHandler.post(recorderUiPoll);
+    }
+    @Override protected void onPause() {
+        recorderUiHandler.removeCallbacks(recorderUiPoll);
+        stopRecorderDiagnostics();
+        super.onPause();
+    }
 
     private View makePage() {
         ScrollView scroll = new ScrollView(this);
@@ -66,7 +100,7 @@ public class MainActivity extends Activity {
         main.addView(kicker);
         TextView title = text("KipAutomate", 30, TEXT, true);
         main.addView(title, bottom(1));
-        TextView sub = text("v0.2 • JSON-сценарии • звонки • TikTok / Reels", 13, MUTED, false);
+        TextView sub = text("v0.9 • JSON • звонки • TikTok / Reels • диктофон", 13, MUTED, false);
         main.addView(sub, bottom(22));
 
         LinearLayout statusCard = card();
@@ -88,6 +122,45 @@ public class MainActivity extends Activity {
             else toast("Разрешение уже предоставлено");
         });
         main.addView(statusCard, bottom(18));
+
+        // Independent recorder module. It never edits or replaces JSON scripts.
+        LinearLayout recorderCard=card();
+        recorderCard.addView(text("🎙️ Диктофон · экраном вниз",21,TEXT,true),bottom(7));
+        recorderCard.addView(text("Предохранитель выключен при запуске. Включи его, подними телефон и положи экраном вниз на 2 секунды. После начала запись остановится только вручную.",13,MUTED,false),bottom(11));
+        recorderStatus=text("Предохранитель выключен",15,GREEN,true);
+        recorderCard.addView(recorderStatus,bottom(9));
+        recorderArmButton=button("🛡️ Включить предохранитель",true);
+        recorderCard.addView(recorderArmButton,bottom(7));
+        recorderArmButton.setOnClickListener(v->{
+            if(FaceDownRecorderService.isRecording()) {
+                toast("Запись идёт — сначала нажми «Остановить запись»");
+            }else if(FaceDownRecorderService.isArmed()) {
+                FaceDownRecorderService.disarm(this);
+                toast("Предохранитель выключается");
+            }else {
+                requestRecorderPermissionsAndArm();
+            }
+            recorderUiHandler.postDelayed(this::refreshRecorderUi,500);
+        });
+        recorderStopButton=button("■ Остановить запись",false);
+        recorderCard.addView(recorderStopButton,bottom(11));
+        recorderStopButton.setOnClickListener(v->{
+            if(FaceDownRecorderService.isRecording()) {
+                FaceDownRecorderService.stop(this);
+                toast("Остановка записи отправлена");
+                recorderUiHandler.postDelayed(this::refreshRecorderUi,500);
+            }
+        });
+        Button testSensor=button("🧪 Проверить датчик (15 с, без записи)",false);
+        recorderCard.addView(testSensor,bottom(6));
+        testSensor.setOnClickListener(v->{
+            if(diagRunning)stopRecorderDiagnostics();
+            else startRecorderDiagnostics();
+        });
+        recorderDiagStatus=text("Диагностика не запущена. Сначала проверь датчик без записи.",12,MUTED,false);
+        recorderCard.addView(recorderDiagStatus,bottom(7));
+        recorderCard.addView(text("Аудиофайлы: Музыка → KipAutomate (.m4a). Во время ожидания и записи Android показывает постоянное уведомление с кнопкой остановки.",12,MUTED,false));
+        main.addView(recorderCard,bottom(19));
 
         TextView heading = text("Сценарии", 21, TEXT, true);
         main.addView(heading, bottom(4));
@@ -193,6 +266,117 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+    private boolean recorderPermissionsGranted() {
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)return false;
+        return Build.VERSION.SDK_INT<33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+    }
+    private void requestRecorderPermissionsAndArm() {
+        if(recorderPermissionsGranted()) {
+            try {
+                FaceDownRecorderService.arm(this);
+                LogBook.write(this,"REC UI ARM requested from visible activity");
+                recorderUiHandler.postDelayed(this::refreshRecorderUi,550);
+            }catch(Exception e) {
+                LogBook.write(this,"REC UI ARM FAILED: "+e.getClass().getSimpleName()+": "+e.getMessage());
+                toast("Не удалось включить диктофон: "+e.getMessage());
+            }
+            return;
+        }
+        java.util.ArrayList<String> permissions=new java.util.ArrayList<>();
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)
+            permissions.add(Manifest.permission.RECORD_AUDIO);
+        if(Build.VERSION.SDK_INT>=33 &&
+           checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        requestPermissions(permissions.toArray(new String[0]),42);
+    }
+    private void refreshRecorderUi() {
+        if(recorderStatus==null)return;
+        boolean armed=FaceDownRecorderService.isArmed();
+        boolean recording=FaceDownRecorderService.isRecording();
+        recorderStatus.setText(FaceDownRecorderService.getStatus());
+        recorderStatus.setTextColor(recording?Color.rgb(255,175,175):armed?GREEN:MUTED);
+        if(recorderArmButton!=null) {
+            recorderArmButton.setText(recording?"🛡️ Предохранитель активен":
+                armed?"🛡️ Выключить предохранитель":"🛡️ Включить предохранитель");
+            recorderArmButton.setEnabled(!recording);
+        }
+        if(recorderStopButton!=null)recorderStopButton.setEnabled(recording);
+    }
+    private void startRecorderDiagnostics() {
+        if(diagRunning)return;
+        diagSensorManager=(SensorManager)getSystemService(SENSOR_SERVICE);
+        Sensor sensor=diagSensorManager==null?null:diagSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        if(sensor==null && diagSensorManager!=null)
+            sensor=diagSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        if(sensor==null) {
+            if(recorderDiagStatus!=null)recorderDiagStatus.setText("Датчик гравитации / акселерометр не найден");
+            LogBook.write(this,"REC DIAG FAIL: gravity and accelerometer unavailable");
+            return;
+        }
+        diagRunning=true;diagPassed=false;diagDownSince=0;diagLastLog=0;
+        diagStart=SystemClock.elapsedRealtime();
+        final Sensor diagnosticSensor=sensor;
+        diagListener=new SensorEventListener() {
+            @Override public void onAccuracyChanged(Sensor sensor,int accuracy) {}
+            @Override public void onSensorChanged(SensorEvent event) {
+                if(!diagRunning || event.values.length<3)return;
+                long now=SystemClock.elapsedRealtime();
+                float x=event.values[0],y=event.values[1],z=event.values[2];
+                boolean down=FaceDownRecorderService.isFaceDown(x,y,z);
+                if(down) {
+                    if(diagDownSince==0)diagDownSince=now;
+                    if(!diagPassed && now-diagDownSince>=2000) {
+                        diagPassed=true;
+                        LogBook.write(MainActivity.this,
+                            "REC DIAG PASS: screen-down stable >= 2000 ms; audio NOT recorded");
+                    }
+                }else diagDownSince=0;
+                if(now-diagLastLog>=1100) {
+                    diagLastLog=now;
+                    LogBook.write(MainActivity.this,String.format(Locale.ROOT,
+                        "REC DIAG x=%.1f y=%.1f z=%.1f faceDown=%s stableMs=%d",
+                        x,y,z,down,diagDownSince==0?0:now-diagDownSince));
+                }
+                if(recorderDiagStatus!=null)
+                    recorderDiagStatus.setText(String.format(Locale.ROOT,
+                        "%s | x=%.1f y=%.1f z=%.1f | %s",
+                        diagPassed?"✓ Датчик прошёл тест":down?"Экраном вниз: подтверждаю":"Жду положение экраном вниз",
+                        x,y,z,down?"DOWN":"UP / бок"));
+            }
+        };
+        boolean ok;
+        try {ok=diagSensorManager.registerListener(diagListener,diagnosticSensor,SensorManager.SENSOR_DELAY_GAME);}
+        catch(Exception e) {ok=false;LogBook.write(this,"REC DIAG ERROR: "+e.getMessage());}
+        if(!ok) {
+            diagRunning=false;
+            diagListener=null;
+            if(recorderDiagStatus!=null)recorderDiagStatus.setText("Не удалось подключиться к датчику");
+            LogBook.write(this,"REC DIAG FAIL: sensor registration");
+            return;
+        }
+        LogBook.write(this,"REC DIAG START sensor="+sensor.getName()+
+            " type="+sensor.getType()+" duration=15s microphone=OFF");
+        if(recorderDiagStatus!=null)recorderDiagStatus.setText("Диагностика: положи экраном вниз на 2 секунды. Звук не записывается.");
+        diagTimeout=()->stopRecorderDiagnostics();
+        recorderUiHandler.postDelayed(diagTimeout,15000);
+    }
+    private void stopRecorderDiagnostics() {
+        if(!diagRunning)return;
+        diagRunning=false;
+        if(diagSensorManager!=null && diagListener!=null)
+            diagSensorManager.unregisterListener(diagListener);
+        diagListener=null;
+        if(diagTimeout!=null)recorderUiHandler.removeCallbacks(diagTimeout);
+        if(recorderDiagStatus!=null)
+            recorderDiagStatus.setText(diagPassed?
+                "✓ Диагностика успешно завершена. Можно включать предохранитель.":
+                "Диагностика остановлена. Положение экраном вниз 2 секунды не подтверждено.");
+        LogBook.write(this,"REC DIAG FINISHED passed="+diagPassed+
+            " microphone=OFF elapsedMs="+(SystemClock.elapsedRealtime()-diagStart));
+    }
+
     private void addSocialFilters() {
         try {
             JSONArray existing=ScriptStore.validate(editor.getText().toString());
@@ -252,6 +436,13 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         refreshStatus();
+        if(requestCode==42) {
+            if(recorderPermissionsGranted())requestRecorderPermissionsAndArm();
+            else {
+                LogBook.write(this,"REC UI ARM DENIED: audio or notifications permission missing");
+                toast("Для диктофона разреши микрофон и уведомления");
+            }
+        }
     }
 
     private void showLogs() {
